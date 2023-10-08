@@ -1,0 +1,15 @@
+<Configuration>
+  <Configurator>
+    <Name dnOrder="0" value="default"/>
+    <Harmony dnOrder="1" path="../../MPLAB/Harmony" version="null"/>
+    <Processor dnOrder="2" value="PIC32MX170F256B"/>
+    <Settings dnOrder="4">
+      <Setting dnOrder="0" key="FORCE_OPTIMIZATION" value="false"/>
+      <Setting dnOrder="1" key="GENERATE_BACKUP" value="true"/>
+      <Setting dnOrder="2" key="MERGE_STRATEGY" value="USER_ALL"/>
+      <Setting dnOrder="3" key="DFPPath" value="./dev_packs/Microchip/PIC32MX_DFP/1.1.215/atdf/PIC32MX170F256B.atdf"/>
+      <Setting dnOrder="4" key="CMSISPath" value="./dev_packs/arm/CMSIS/5.6.0"/>
+      <Setting dnOrder="5" key="PackageFilter" value=""/>
+    </Settings>
+  </Configurator>
+</Configuration>

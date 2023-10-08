@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project-private xmlns="http://www.netbeans.org/ns/project-private/1">
+    <editor-bookmarks xmlns="http://www.netbeans.org/ns/editor-bookmarks/2" lastBookmarkId="0"/>
+    <open-files xmlns="http://www.netbeans.org/ns/projectui-open-files/2">
+        <group>
+            <file>file:/home/ricojia/ME433_Advanced_Mechatronics/HW6/firmware/src/imu.c</file>
+            <file>file:/home/ricojia/ME433_Advanced_Mechatronics/HW6/firmware/src/font.h</file>
+            <file>file:/home/ricojia/ME433_Advanced_Mechatronics/HW6/firmware/src/ssd1306.c</file>
+            <file>file:/home/ricojia/ME433_Advanced_Mechatronics/HW6/firmware/src/i2c.h</file>
+            <file>file:/home/ricojia/ME433_Advanced_Mechatronics/HW6/firmware/src/main.c</file>
+            <file>file:/home/ricojia/ME433_Advanced_Mechatronics/HW6/firmware/src/imu.h</file>
+            <file>file:/home/ricojia/ME433_Advanced_Mechatronics/HW6/firmware/src/i2c.c</file>
+        </group>
+    </open-files>
+</project-private>
