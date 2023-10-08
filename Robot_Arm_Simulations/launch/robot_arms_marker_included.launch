@@ -1,0 +1,14 @@
+<launch>
+
+    <arg name="use_gui" default = "false"/>
+    <arg name="rviz_launch" default="true"/>
+    <arg name="marker_status" default="true"/>
+
+    <include file="$(find robot_arm_simulation)/launch/robot_arms.launch">
+        <arg name="use_gui" value="$(arg use_gui)"/>
+        <arg name="rviz_launch" value="$(arg rviz_launch)"/>
+    </include>
+
+    <node name="marker" pkg="robot_arm_simulation" type="marker" if="$(arg marker_status)"/>
+
+</launch>

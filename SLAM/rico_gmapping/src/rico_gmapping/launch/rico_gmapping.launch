@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- node name cannot have .py -->
+    <arg name="test_2d_scan" default="false" doc="launch rviz and test_2d_scan"/>
+    <!-- launch with roslaunch rico_gmapping rico_gmapping.launch test:=true -->
+    <group if="$(arg test_2d_scan)">
+        <node name="test_2d_scan_sensor" type="test_2d_scan.py" pkg="rico_gmapping" output="screen"></node>
+        <node name="test_2d_scan_processor" type="test_2d_scan_processor" pkg="rico_gmapping" output="screen"></node>
+        <node pkg="rviz" type="rviz" name="rviz" required="true" args="$(find rico_gmapping)/rviz/test_laser_scan.rviz"/>
+    </group>
+
+    <arg name="test_with_gazebo" default="false" doc="launch gmapping with gazebo environment"/>
+    <group if="$(arg test_with_gazebo)">
+      <include file="$(find turtlebot3_gazebo)/launch/turtlebot3_house.launch">
+        <arg name="x_pos" value="-3"/>
+        <arg name="y_pos" value="1"/>
+        <arg name="z_pos" value="0"/>
+      </include>
+      <node name="slam_gmapping" pkg="gmapping" type="slam_gmapping">
+         <param name="scan" value="base_scan"/>
+      </node>
+
+      <arg name="model" default="$(env TURTLEBOT3_MODEL)" doc="model type [burger, waffle, waffle_pi]"/>
+      <include file="$(find turtlebot3_bringup)/launch/turtlebot3_remote.launch">
+        <arg name="model" value="$(arg model)" />
+      </include>
+
+      <node pkg="rviz" type="rviz" name="rviz" required="true"
+            args="-d $(find turtlebot3_navigation)/rviz/turtlebot3_navigation.rviz"/>
+
+        <!-- Run the map server -->
+      <!--   <arg name="map_file" default="$(find rico_gmapping)/maps/house.yaml"/> -->
+      <!-- <node name="map_server" pkg="map_server" type="map_server" args="$(arg map_file)"/> -->
+    </group>
+
+</launch>

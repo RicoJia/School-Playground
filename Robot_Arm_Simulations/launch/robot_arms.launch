@@ -1,0 +1,27 @@
+<launch>
+  <!-- load the urdf into the parameter server -->
+<!--  <param name="robot_description" textfile="$(find robot_arm_simulation)/urdf/arms.urdf" />-->
+  <param name="robot_description" command="$(find xacro)/xacro --inorder '$(find robot_arm_simulation)/urdf/arms.xacro'"/>
+
+  <!-- The robot_state_publisher reads the urdf from /robot_description parameter
+       and listens to joint information on the /joint_states topic -->
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+
+  <!-- The joint state publisher will be launched with a gui, read the urdf from /robot_description
+       and publish the joint values on /joint_states -->
+  <arg name="use_gui" default = "false"/>
+  <node name="joint_state_publisher" pkg="joint_state_publisher" if="$(arg use_gui)" type="joint_state_publisher">
+    <param name="use_gui" value="$(arg use_gui)" />
+  </node  >
+
+  <node name = "heart_drawing_arm" pkg = "robot_arm_simulation" unless="$(arg use_gui)" type = "robot_arm_simulation">
+    <rosparam file="$(find robot_arm_simulation)/config/params.yaml" />
+  </node>
+
+  <!-- rviz will enable us to see the robot -->
+  <arg name="rviz_launch" default="true"/>
+<!--  <group if="$(arg rviz_launch)" >-->
+    <node name="rviz" pkg="rviz" type="rviz" if="$(arg rviz_launch)" args="-d $(find robot_arm_simulation)/rviz/view_robot.rviz" required="true"/>
+<!--  </group>-->
+
+</launch>

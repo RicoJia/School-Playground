@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="robot_arm">
+
+  <xacro:property name="grey_mat">
+      <material name="arm_grey_mat">
+        <color rgba="0.75 0.75 0.75 1.0" />
+      </material>
+  </xacro:property>
+
+  <xacro:property name="yellow_mat">
+      <material name="arm_yellow_mat">
+        <color rgba="1 1 0 1.0" />
+      </material>
+  </xacro:property>
+
+  <xacro:property name="red" value="red"/>
+  <xacro:property name="yellow" value="yellow"/>
+
+
+  <xacro:macro name="arm" params="name color origin_xyz origin_rpy length radius">
+    <link name="${name}">
+      <visual>
+        <origin xyz="${origin_xyz}" rpy="${origin_rpy}"/>
+        <geometry>
+            <cylinder length="${length}" radius="${radius}"/>
+         </geometry>
+         <xacro:if value="${color=='yellow'}">
+           <xacro:insert_block name="yellow_mat"/>
+         </xacro:if>
+         <xacro:if value="${color=='grey'}">
+           <xacro:insert_block name="grey_mat"/>
+         </xacro:if>
+      </visual>
+    </link>
+  </xacro:macro>
+
+
+
+  <xacro:macro name="arm_joint" params="name type origin_xyz origin_rpy parent child axis">
+    <joint name="${name}" type="${type}">
+      <origin rpy="${origin_rpy}" xyz="${origin_xyz}"/>
+      <parent link="${parent}" />
+      <child link="${child}" />
+      <xacro:unless value="${type=='fixed'}">
+        <limit lower="-3.142" upper="3.142" effort="100" velocity="100" />
+        <axis xyz="${axis}"/>
+      </xacro:unless>
+    </joint>
+  </xacro:macro>
+
+</robot>
