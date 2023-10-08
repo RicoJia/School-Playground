@@ -1,0 +1,154 @@
+#!/usr/bin/env python
+""" 
+Purpose:  This is an open loop navigation control node for autonomous gmapping in VSLAM.  
+
+Strategy1(not in use) : 2D map binary search: the robot will search for the nearest unknown point within the walls using binary search. The step size on map is halved once an unmapped point is found.  
+
+Strategy 2 (in use): generate a group of random points that fall within the boundaries of the house. When it takes the robot over 10s to finish a goal, the robot will reset its goal and the action time for the next goal will be reduced to 5s, so it can break away faster. Once it can achieve a goal in less than 5s, it is sure that the robot is not stuck, so the action time for the next goal will be changed back to 10s. 
+
+Boundary: Assume this is a rectanglular area
+
+Input(s): /amcl_pose for pose estimates in robot's global map
+
+Output(s): /move_base_simple/goal (geometrysgs/PoseStamped)
+
+"""
+import std_msgs.msg
+import rospy
+from geometry_msgs.msg import PoseStamped,Pose
+import math
+import numpy as np
+from tf import transformations
+import rospy
+import actionlib
+from nav_msgs.msg import OccupancyGrid
+from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal, MoveBaseActionFeedback
+import random
+
+initial_pose_x = -3
+initial_pose_y = 1
+initial_pose_a = 0
+laser_range = 3.5
+
+
+#Map properties
+#In map, -1 is unknown, 0 is free, and 1 is occupied. 
+resolution = 0.05
+origin = np.array([-10,-10])  #lower-left pixel in map
+x_boundary = [-6.64,6.85]   #I measured this 
+y_boundary = [-3.25,4.36]
+map_height = 384
+
+def mat2map(mat_coord):
+    """
+    This function takes in matrix coordinate in numpy.array. 
+    y -> row, x-> col
+    """
+    point_x = (mat_coord*resolution)[1]
+    point_y = (mat_coord*resolution)[0]
+    return origin + np.array([point_x,point_y])
+
+def map2mat(map_coord):
+    """
+    This function takes in map coordinate in numpy.array. 
+    """
+    mat_row = ((map_coord-origin)/0.05)[1]
+    mat_col = ((map_coord-origin)/0.05)[0]
+    mat_coord_float =np.array([mat_row, mat_col]) 
+    return mat_coord_float.astype(int)
+
+def random_pt_gen():
+    """
+    This function generates a random point that falls within the range of the map
+    """
+    while 1:
+        x_range = x_boundary[1]-x_boundary[0]
+        y_range = y_boundary[1]-y_boundary[0]
+        x = np.random.random()*x_range + x_boundary[0]
+        y = np.random.random()*y_range + y_boundary[0]
+        if x>-4.39 and x<5.26 and y<0.69:# we don't want to explore outside of the house. 
+            pass
+        else:
+            break
+
+    return np.array([x,y])
+
+class auto_gmapping(object):
+    global initial_pose_x
+    global initial_pose_y
+    global initial_pose_a
+    
+    def __init__(self):
+        self.pub = rospy.Publisher("move_base_simple/goal",PoseStamped, queue_size=10,latch=True)
+        self.map_sub = rospy.Subscriber("map",OccupancyGrid,self.map_callback)
+        self.client = actionlib.SimpleActionClient('move_base',MoveBaseAction)
+        self.client.wait_for_server()
+        self.branch_points = [[initial_pose_x,initial_pose_y]]
+        
+        self.action_time = 10
+        self.strategy2_main() 
+    def strategy2_main(self):
+        """
+        This is the main loop of Strategy 2 - random point generator!
+        TODO: unfinished
+        """
+        while not rospy.is_shutdown():
+            counter = 0
+            random_pt = random_pt_gen()
+            random_pt_mat = map2mat( random_pt )
+            while self.grid_mat[random_pt_mat[0]][random_pt_mat[1]]!=-1:
+                print "grid cell val", self.grid_mat[random_pt_mat[0]][random_pt_mat[1]]
+                random_pt = random_pt_gen()
+                random_pt_mat = map2mat( random_pt )
+                counter += 1
+        
+            self.x = random_pt[0]
+            self.y = random_pt[1]
+            self.theta = 0
+            print "counter of this round is: ", counter
+            print"random pts are ", random_pt
+            self.issue_command()
+
+  
+    def map_callback(self,msg):
+        """
+        This function updates self.map from /map
+        """
+        self.grid_mat = np.array(msg.data).reshape((msg.info.height,msg.info.width))
+    def issue_command(self):
+        """
+        this node issues position command to the robot
+        """
+        header = std_msgs.msg.Header()
+        header.stamp = rospy.Time.now()
+        header.frame_id = "map"
+        pose = Pose()
+        pose.position.x = self.x
+        pose.position.y = self.y
+        pose.position.z = 0
+        
+        quat = transformations.quaternion_from_euler(0.0, 0.0, self.theta)
+        pose.orientation.x = quat[0]
+        pose.orientation.y = quat[1]
+        pose.orientation.z = quat[2]
+        pose.orientation.w = quat[3]
+        
+        goal = MoveBaseGoal()
+        goal.target_pose.header = header
+        goal.target_pose.pose = pose
+        print "going to goal: ", self.x," , ", self.y
+        self.client.send_goal(goal)
+        wait = self.client.wait_for_result(timeout=rospy.Duration( self.action_time))
+        if not wait:
+            print "The robot might be stuck"
+#            self.action_time = 5
+#        else:
+#            self.action_time = 10
+
+if __name__ == "__main__":
+    try:
+        rospy.init_node("auto_gmapping")
+        auto_gmapping()
+        rospy.spin()
+    except rospy.ROSInterruptException:
+        pass

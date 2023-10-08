@@ -1,0 +1,349 @@
+#!/usr/bin/python
+"""
+This is the ekf node that filters the pose and the landmark locations, based on the control signal and the map.
+How it works:
+    a. Subscribe to /odom -> /baselink from odometer, gets the car's pose from odometry, then broadcast TF
+    b. Subscribe to /landmarks to get landmark observations, then use EKF to estimate the robot and landmark pose
+
+How to use this code:
+    a. substitute the name of the filter: self.ekf_obj with the name of your filter name
+    b. Have two interface functions:
+        1. self.ekf_obj.measurement_update( self.landmarks) - measurement update callback that takes in a series of landmark measurement ([range1, bearing1], [range2, bearing2] ..), where the state vector of the filter should be [x, y, theta]
+        2. Motion_predict(commanded_control, delta_t), where commanded control is [linear_velocity_increment, angular velocity_increment], and delta_t is 1 as the system integrates control increments from wheel odometry information. The reason for that
+        is to reduce accumulative errors.
+"""
+
+import rospy
+import numpy as np
+import tf
+from real_world.msg import LandmarkList
+from sensor_msgs.msg import JointState
+from nav_msgs.msg import Odometry
+from ekf import ekf_object
+from real_world.srv import GetRealPose, GetRealPoseResponse
+
+#-------------------------------------------------------helper functions
+# convert radians into [-pi, pi]
+def normalize_angle(rad):
+    _rad = rad - int((rad)/(2.0 * np.pi)) * (2.0*np.pi)
+    if abs(_rad) > np.pi:
+        _rad = -1.0*(2.0*np.pi-_rad) if _rad> 0 else 2.0*np.pi+_rad
+    if _rad == -1*np.pi:
+        _rad = np.pi
+    return _rad
+
+def SE2_inv(T):
+    """Inverts a homogeneous transformation matrix
+
+    :param T: A homogeneous transformation matrix
+    :return: The inverse of T
+    Uses the structure of transformation matrices to avoid taking a matrix
+    inverse, for efficiency.
+
+    Example input:
+        T = np.array([[1, 0,  1],
+                      [0, 1, 0],
+                      [0, 0, 1] ])
+
+    Output:
+        T = np.array([[1, 0,  -1],
+                      [0, 1, 0],
+                      [0, 0, 1] ])
+    """
+    p = T[:2,2]
+    R = T[:2, :2]
+    Rt = np.array(R).T
+    return np.r_[np.c_[Rt, -np.dot(Rt, p)], [[0, 0, 1]]]
+    
+def theta_2_SO2(theta):
+    """
+    Input theta is a scalar vector
+    Output: SO2 Rotation matrix
+    """
+    c = np.cos(theta)
+    s = np.sin(theta)
+    R = np.array([[c, -s],
+                  [s, c]])
+    return R
+
+def pose_twist_to_SE2(pose_twist):
+    '''
+    In this program, we represent a robot's pose in a twist-like way: [theta,x,y]. However, this
+    is NOT an actual twist, and the corresponding SE2 does not follow the standard "twist way". 
+    Args:
+        pose_twist: [theta, x, y]
+    Output:
+        SE2 [R p; 0 1]
+    '''
+    theta = pose_twist[0]
+    x = pose_twist[1]
+    y = pose_twist[2]
+    R = theta_2_SO2(theta)
+    p = np.array([x,y]).reshape(2,1)
+    T = np.vstack([np.hstack([R, p]), np.array([[0, 0, 1]]) ])
+    return T
+    
+def twist_to_SE2(twist):
+    """
+    Input: twist in unit time [theta, x, y], which is screw x theta. screw is [1, vx, vy].
+    Output: T matrix SE2
+        T = np.array([[R, P],
+                      [0, 1]])
+    """
+    theta = twist[0]
+    R = theta_2_SO2(theta)
+    x = twist[1]
+    y = twist[2]
+
+    if theta == 0:
+        G_theta_v = np.array([[x], [y]])
+    else:
+        vx = x/theta
+        vy = y/theta
+        R = theta_2_SO2(theta)
+        w = 1 # this is the "omega axis "
+        w_hat = hat(w)
+        G_theta = np.identity(2)*theta + (1.0 - np.cos(theta))*w_hat + (theta - np.sin(theta))* w_hat.dot(w_hat)
+        G_theta_v = G_theta.dot(np.array([[vx], [vy]]))
+
+    T = np.vstack([np.hstack([R, G_theta_v]), np.array([[0, 0, 1]]) ])
+    return T
+
+
+def hat(w):
+    """
+    Returns the hatted version of a scalar w. The result is in so(3)
+    """
+    w_hat = np.array([[0.0, -w],
+                      [w, 0.0]])
+    return w_hat
+
+def SO2_2_theta(R):
+    """
+    Input R is SO2 Rotation matrix.
+    Sample Input: [[cos(theta) -sin(theta)],
+        [sin(theta) cos(theta)]]
+        Output is the angle of R
+    Sample output: theta = pi/2
+    """
+    R = np.array(R)
+    theta = np.arctan2(R[1,0], R[0,0])
+    return theta
+
+def SE2_to_Pose_Twist(T):
+    '''
+    In this program, we represent a robot's pose in a twist-like way: [theta,x,y]. However, this
+    is NOT an actual twist, and the corresponding SE2 does not follow the standard "twist way".
+    Args:
+        T = np.array([[R, P],
+           [0, 1]])
+    Output: twist representation of the robot pose [theta, x, y]
+    '''
+    T = np.copy(T)
+    R= T[: 2, : 2]
+    p = T[:2, -1]
+    theta = SO2_2_theta(R)
+    pose_twist = np.append(theta, p)
+    return pose_twist
+
+
+def SE2_to_Twist(T):
+    """
+    Input: T matrix SE2
+            T = np.array([[R, P],
+                       [0, 1]])
+    Output: twist in unit time [theta, x, y], which is screw x theta. screw is [1, vx, vy].
+    """
+    T = np.copy(T)
+    R= T[: 2, : 2]
+    p = T[:2, -1]
+    theta = SO2_2_theta(R)
+    if abs(theta)<1e-6:
+        xy = p
+    else:
+        w = 1 #this is the omega axis
+        w_hat = hat(w)
+        G_minus1 = 1/theta * np.identity(2) - 1.0/2.0*w_hat + ( 1/theta - 1.0/2.0*(1.0/np.tan(theta/2.0)))*w_hat.dot(w_hat)
+        v = G_minus1.dot(np.array([[p[0]], [p[1]]]))
+        xy = np.array([v[0], v[1]])* theta
+
+    twist = np.append(theta, xy)
+    return twist
+
+
+#--------------------------------------------------------------------node starts
+        
+class ekf_node(object):
+    '''
+    This is the class for ekf_node. It updates /map -> /odom TF
+    Assume:
+        1. joint_states is [left wheel, right wheel]
+        2. the real_world node is always publishing odom messages.
+        3. Observations come in at a much slower rate than odometry
+    '''
+    def __init__(self):
+        self.odom_frame_id = rospy.get_param("~odom_frame_id")
+        self.map_frame_id = rospy.get_param("~map_frame_id")
+        self.map_odom_broadcaster = tf.TransformBroadcaster()
+
+        self.last_update_time = 0.0
+        self.landmarks = np.empty((0, 3))           #self.landmarks: [time, id, range, bearing, range_stddev, bearing_stddev]
+        self.Twist_so = np.array([0.0, 0.0, 0.0])   #Twist: [theta, x, y]
+        self.Twist_ob = np.array([0.0, 0.0, 0.0])
+        self.T_control = np.identity(3)
+        self.T_control_buffer = np.identity(3)  # During reset, T_control might be changed unintentionally by joint_states callback
+        self.T_control_reset_flag = False
+        self.T_control_bufferred_flag = False
+        self.wheel_radius = rospy.get_param("~wheel_radius")
+        self.wheel_base = rospy.get_param("~wheel_base")
+        self.landmark_num = rospy.get_param("~circular_obstacles_num")
+
+        rospy.Subscriber("/joint_states", JointState, self.joint_states_callback)
+        rospy.Subscriber("/landmarks", LandmarkList, self.landmarks_callback)
+        rospy.Subscriber("/odom", Odometry, self.odom_callback)
+        self.initialized_delay_applied = False
+        self.initialize_pose()
+
+        #TODO: change the name of your filter object!
+        self.ekf_obj = ekf_object(landmark_num = self.landmark_num)
+
+    def initialize_pose(self):
+        """
+        Initialize the fitler pose from the actual world frame pose of the robot
+        """
+        rospy.wait_for_service("/RealWorld/get_real_pose")
+
+        try:
+            #TODO: Make sure the state vector is [x, y, theta]
+            get_real_pose = rospy.ServiceProxy("/RealWorld/get_real_pose", GetRealPose)
+            resp1 = get_real_pose()
+            self.ekf_obj.miu[0,0] = resp1.x
+            self.ekf_obj.miu[1,0] = resp1.y
+            self.ekf_obj.miu[2,0] = resp1.theta
+            self.Twist_ob = np.array([resp1.theta, resp1.x, resp1.y])
+        except rospy.ServiceException:
+            print "EKF node pose initialization Service Failed"
+
+    def publish_tf(self):
+        self.map_odom_broadcaster.sendTransform((self.Twist_so[1], self.Twist_so[2], 0.0),
+                                                tf.transformations.quaternion_from_euler(0.0, 0.0, self.Twist_so[0]),
+                                                rospy.Time.now(),
+                                                self.odom_frame_id,
+                                                self.map_frame_id
+                                                )
+
+    def get_unnormalized_control_input(self, joint_velocities):
+        # Return: commanded control input np array [ theta_dot, x_dot,y_dot]
+        # Assumption of this function is: landmark observations come before wheels finish half revolution.
+        # Args:
+        #     joint_velocities - wheel velocities [left_wheel, right_wheel]
+        # get normalized wheel increments
+        delta_wheel_pos = joint_velocities
+
+        l_vel = normalize_angle( delta_wheel_pos[0] )
+        r_vel = normalize_angle( delta_wheel_pos[1] )
+        PI = np.pi
+
+        if abs(l_vel)> PI:
+            l_vel = -1.0*l_vel/abs(l_vel) * (PI - abs(l_vel))
+        if abs(r_vel)> PI:
+            r_vel = -1.0*r_vel/abs(r_vel) * (PI - abs(r_vel))
+
+        #get twist from wheel vel, then calculate [theta_dot, x_dot, y_dot]
+        H = np.array([[-1.0 * self.wheel_radius/self.wheel_base, self.wheel_radius/self.wheel_base],
+                      [self.wheel_radius/2.0, self.wheel_radius/2.0],
+                      [0.0, 0.0]])
+        u = np.array([l_vel, r_vel])
+        v = H.dot(u)
+        if v[0] == -PI:
+            v[0] = PI
+
+        return v
+
+
+    def landmarks_callback(self, landmarks_msg):
+        # In this step, we update the robot's estimated pose, by running the Filter
+        self.landmarks = np.empty((0, 3))
+        for i_landmark in range(len(landmarks_msg.landmarks)):
+            landmark = landmarks_msg.landmarks[i_landmark]
+            landmark_arr = np.zeros(3)
+            landmark_arr = np.array([landmark.range,
+                                     landmark.bearing,
+                                     landmark.landmark_id
+                                     ])
+            self.landmarks = np.append(self.landmarks, landmark_arr.reshape(1,3), axis = 0)
+
+        innovation = self.ekf_obj.measurement_update( self.landmarks)
+
+
+        self.ekf_obj.miu += innovation
+        #miu = ([2*n + 3]x1) matrix, [x, y, theta, mx1, my1...]
+        new_miu= self.ekf_obj.miu[:,0]
+        new_pose_twist = np.array([new_miu[2], new_miu[0], new_miu[1]])
+
+        #calculate Tso by Tsb* inv(Tob)
+        Tsb = pose_twist_to_SE2(new_pose_twist)
+        Tbo = SE2_inv(pose_twist_to_SE2(self.Twist_ob))
+        Tso = Tsb.dot(Tbo)
+        self.Twist_so = SE2_to_Pose_Twist(Tso)
+
+
+
+    def joint_states_callback(self, joint_states_msg):
+        '''
+        In order to reduce accumulative error from wheels, we update the body twist every time we receive a wheel pos update.
+        Args: joint_states_msg: new wheel states
+        '''
+
+        if self.initialized_delay_applied == True:
+            joint_velocities = np.array(joint_states_msg.velocity)
+
+            instant_control_input_twist = self.get_unnormalized_control_input(joint_velocities)   #[theta_dot, x_dot]
+
+            #if T_control is being reset, we want to buffer the control twist (only one control twist)
+            self.T_control = self.T_control.dot( twist_to_SE2(instant_control_input_twist) )
+
+            commanded_control_twist = SE2_to_Twist(self.T_control)  #[theta_dot, x_dot, y_dot]
+            self.T_control = np.identity(3)
+            delta_t = 1     #Keep delta_t = 1, as our control input is incremented and is not related to time.
+            commanded_control = np.array([ commanded_control_twist[1], commanded_control_twist[0] ]) / delta_t
+
+            self.ekf_obj.motion_predict(commanded_control, delta_t)
+            new_miu= self.ekf_obj.miu[:,0]
+            new_pose_twist = np.array([new_miu[2], new_miu[0], new_miu[1]])
+
+
+
+            Tsb = pose_twist_to_SE2(new_pose_twist)
+            Tbo = SE2_inv(pose_twist_to_SE2(self.Twist_ob))
+            Tso = Tsb.dot(Tbo)
+
+            self.Twist_so = SE2_to_Pose_Twist(Tso)
+            self.publish_tf()
+        else:
+            self.initialized_delay_applied = True
+
+
+    def odom_callback(self, odom_msg):
+        quat_x = odom_msg.pose.pose.orientation.x
+        quat_y = odom_msg.pose.pose.orientation.y
+        quat_z = odom_msg.pose.pose.orientation.z
+        quat_w = odom_msg.pose.pose.orientation.w
+
+        theta = tf.transformations.euler_from_quaternion((quat_x, quat_y, quat_z,quat_w))[2]
+        self.Twist_ob[0] = theta
+        self.Twist_ob[1] = odom_msg.pose.pose.position.x
+        self.Twist_ob[2] = odom_msg.pose.pose.position.y
+
+
+
+
+if __name__ == "__main__":
+    try:
+        rospy.init_node("ekf_node")
+        ekf_node()
+        rospy.spin()
+    except rospy.ROSInterruptException:
+        pass
+
+

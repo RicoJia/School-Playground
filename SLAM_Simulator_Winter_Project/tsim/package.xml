@@ -1,0 +1,35 @@
+<?xml version="0.0.1"?>
+<package format="2">
+  <name>tsim</name>
+  <version>0.0.1</version>
+  <description>Turtlesim following a rectangular trajectory</description>
+
+  <maintainer email="ruotongjia2020@u.northwestern.com">Rico Jia</maintainer>
+
+  <license>BSD</license>
+
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <build_depend>roscpp</build_depend>
+  <build_depend>geometry_msgs</build_depend>
+  <build_depend>std_srvs</build_depend>
+  <build_export_depend>roscpp</build_export_depend>
+  <build_export_depend>geometry_msgs</build_export_depend>
+  <build_export_depend>std_srvs</build_export_depend>
+  <exec_depend>roscpp</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>turtlesim</exec_depend>
+
+  <build_depend>rigid2d</build_depend>
+
+  <build_depend>sensor_msgs</build_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <build_export_depend>sensor_msgs</build_export_depend>
+
+
+  <build_depend>tf</build_depend>
+  <exec_depend>tf</exec_depend>
+  <build_export_depend>tf</build_export_depend>
+
+
+</package>

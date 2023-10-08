@@ -1,0 +1,12 @@
+<launch>
+	<include file="$(find darknet_ros)/launch/darknet_ros.launch" >
+		<arg name="image" value="/cam1/image_raw"/>
+	</include>
+
+    <node pkg="usb_cam" type="usb_cam_node" name="cam1">
+      <!-- Parameters used to find the camera -->
+      <param name="pixel_format" value="yuyv"/>
+    </node>
+
+	<node name="rviz" pkg="rviz" type="rviz" args = "$(find hw4)/rviz/view.rviz" required="true" />
+</launch>

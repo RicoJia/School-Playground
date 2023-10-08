@@ -1,0 +1,64 @@
+<launch>
+
+<!-- Arguments --> 
+  <arg name="slam_methods" default="gmapping"/>
+  <arg name="model" default="$(env TURTLEBOT3_MODEL)" doc="model type [burger, waffle, waffle_pi]"/>
+  <arg name="map_file" default="$(find hw4)/src/maps/hw4_map.yaml"/>
+  <arg name="move_forward_only" default="false"/>
+  <arg name="open_rviz" default="true"/>
+  <arg name="add_obstacle" default="false"/>
+
+  <arg name="initial_pose_x" default="-3"/>
+  <arg name="initial_pose_y" default="1"/>
+  <arg name="initial_pose_a" default="0"/>
+
+ <!-- Turtlebot3 -->
+   
+  <include file="$(find hw4)/src/launch/add_obstacle_house.launch" if="$(arg add_obstacle)"/>
+
+  <include file="$(find turtlebot3_gazebo)/launch/turtlebot3_house.launch" unless="$(arg add_obstacle)"/>
+
+
+  <!-- copied from navigation node --> 
+  <!-- Turtlebot3 --> 
+  <include file="$(find turtlebot3_bringup)/launch/turtlebot3_remote.launch">
+    <arg name="model" value="$(arg model)" />
+  </include>
+
+  <!-- Map server --> 
+  <node pkg="map_server" name="map_server" type="map_server" args="$(arg map_file)"/>
+
+  <!-- AMCL customized --> 
+  <include file="$(find hw4)/src/launch/amcl_hw4.launch">
+	<arg name="initial_pose_x" value="$(arg initial_pose_x)"/>
+	<arg name="initial_pose_y" value="$(arg initial_pose_y)"/>
+	<arg name="initial_pose_a" value="$(arg initial_pose_a)"/>
+  </include>
+
+  <!-- move_base customized --> 
+  <include file="$(find hw4)/src/launch/move_base_hw4.launch">
+    <arg name="model" value="$(arg model)" />
+    <arg name="move_forward_only" value="$(arg move_forward_only)"/>
+  </include>
+
+  <!-- rviz --> 
+  <group if="$(arg open_rviz)"> 
+    <node pkg="rviz" type="rviz" name="rviz" required="true"
+          args="-d $(find turtlebot3_navigation)/rviz/turtlebot3_navigation.rviz"/>  
+  </group>
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <!--<param name="tf_prefix" value="hw4"/> -->
+</launch>
+
