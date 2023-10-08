@@ -1,0 +1,8 @@
+<library path="lib/librico_rrt_plugin">
+  <class name="RicoRrtPlugin" type="rico_rrt_plugin::RicoRrtPlugin" base_class_type="nav_core::BaseGlobalPlanner">
+      <description>
+          RRT base global planning frame for ROS navigation stack
+	  </description>
+  </class>
+</library>
+

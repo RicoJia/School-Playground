@@ -1,0 +1,14 @@
+build
+devel
+.ros
+.cache                          
+.rviz
+.config
+.python_history                  
+.viminfo
+.catkin_workspace  
+install
+rosserial
+libraries
+armadillo-9.870.2
+__pycache__
