@@ -1,0 +1,125 @@
+#!/usr/bin/env python
+"""  The main node that is called. It receives the desired position on plane and, control the force
+PUBLISHER:
+  + /ee_wrench(geometry_msgs/WrenchStamped)
+"""
+
+import rospy
+
+from geometry_msgs.msg import Pose, WrenchStamped
+from trajectory_generation import TrajGen
+import intera_interface
+from random import randrange
+
+class TicTacToe(object):
+
+    def __init__(self):
+        # initializing the member variables
+        self.wrenchPublisher = rospy.Publisher("/ee_wrench", WrenchStamped, queue_size=10)
+        self.wrenchMsg = WrenchStamped()
+
+        self._limb = intera_interface.Limb("right")
+        self._head = intera_interface.Head()
+        self._gripper = intera_interface.Gripper()
+
+        self.initial_t = rospy.Time.now().to_sec()
+
+        self.targetEePose = Pose()
+        self.desiredEePose = Pose()
+        self.initialPose = self._limb.endpoint_pose()
+
+        self.maneuver_time = 4.0;
+        self.targetEePose.orientation.x = -0.7071068
+        self.targetEePose.orientation.y = 0.7071068
+        self.targetEePose.orientation.z = 0.0
+        self.targetEePose.orientation.w = 0.0
+
+        self.desiredEEForce = 7.5
+        self.desiredZposInRightHand = 0.0
+        self.kP = 80.0/10000000
+
+        self.previousMode = 99
+        self.modeChanged = False
+
+    def forceControl(self):
+        # desired z position relative to the end effector is calculated with a simple P controller.
+        self.currentPose = self._limb.endpoint_pose()
+        self.currentEffort = self._limb.endpoint_effort()
+        self.desiredZposInRightHand = self.desiredZposInRightHand + self.kP * (self.desiredEEForce - self.currentEffort['force'].z)
+        self.desiredEePose.position.z = self.currentPose['position'].z - self.desiredZposInRightHand  # force control
+
+    def gripper_open(self):
+        self._gripper.open()
+        rospy.sleep(1.0)
+
+    def gripper_close(self):
+        self._gripper.close()
+        rospy.sleep(1.0)
+
+    def publishWrench(self):
+        # publish WrecnhStamped for visualization purposes in Rviz
+        self.currentEffort = self._limb.endpoint_effort()
+
+        self.wrenchMsg.header.frame_id = "right_hand"
+        self.wrenchMsg.wrench.force.x = self.currentEffort['force'].x
+        self.wrenchMsg.wrench.force.y = self.currentEffort['force'].y
+        self.wrenchMsg.wrench.force.z = self.currentEffort['force'].z
+        self.wrenchMsg.wrench.torque.x = self.currentEffort['torque'].x
+        self.wrenchMsg.wrench.torque.y = self.currentEffort['torque'].y
+        self.wrenchMsg.wrench.torque.z = self.currentEffort['torque'].z
+
+        self.wrenchPublisher.publish(self.wrenchMsg)
+
+    def modeO(self):
+        # Marker moves in the air ( No force control)
+        if(self.modeChanged is True):
+            self.currentPose = self._limb.endpoint_pose()
+            self.desiredEePose.position.z = self.currentPose['position'].z
+
+    def modeMinus1(self):
+        # Marker loses it contact with the board ( No force control)
+        if(self.modeChanged is True):
+            self.currentPose = self._limb.endpoint_pose()
+            self.desiredEePose.position.z = self.currentPose['position'].z + 0.015
+            # print(self.desiredEePose.position.z)
+
+def main():
+    """ The main() function. """
+    rospy.init_node('move_to_desired_pose', anonymous=True)
+
+    print("Starting program")
+    eePoseController = TicTacToe()
+    trajectoryGenerator = TrajGen()
+    while (not rospy.is_shutdown()) & trajectoryGenerator.gameRunning:
+        trajectoryGenerator.update_trajectory_status()
+        [eePoseController.desiredEePose.position.x, eePoseController.desiredEePose.position.y] = trajectoryGenerator.get_xy()
+        if trajectoryGenerator.object_2_draw == "end":
+            break
+        eePoseController.desiredEePose.orientation = eePoseController.targetEePose.orientation
+
+        if(eePoseController.previousMode is not trajectoryGenerator.get_draw_status()):
+            eePoseController.modeChanged = True
+        else:
+            eePoseController.modeChanged = False
+
+        if(trajectoryGenerator.get_draw_status() == 1):
+            eePoseController.forceControl()
+        elif(trajectoryGenerator.get_draw_status() == 0):
+            eePoseController.modeO()
+        elif (trajectoryGenerator.get_draw_status() == -1):
+            eePoseController.modeMinus1()
+
+        eePoseController.previousMode = trajectoryGenerator.get_draw_status()
+
+        joint_angles = eePoseController._limb.ik_request(eePoseController.desiredEePose)
+        eePoseController._limb.set_joint_positions(joint_angles)
+
+        eePoseController.publishWrench()
+        eePoseController._head.set_pan(-joint_angles["right_j0"])
+
+if __name__ == '__main__':
+    try:
+        main()
+        print("Game Over")
+    except rospy.ROSInterruptException:
+        pass
