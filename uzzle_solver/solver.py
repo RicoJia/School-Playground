@@ -49,6 +49,16 @@ def solve(labels: List[List[str]]) -> Optional[List[List[int]]]:
                 row.append(WORD_TO_LETTER.get(key, WORD_TO_LETTER.get(str(v).strip(), ".")))
         board.append(row)
 
+    # Check if all 5 colors are present
+    colors_seen = set()
+    for r in range(H):
+        for c in range(W):
+            if board[r][c] in {"R", "O", "G", "B", "P"}:
+                colors_seen.add(board[r][c])
+    
+    if len(colors_seen) < 4:
+        return None  # Not all 5 colors present
+
     # Cells to cover (non-empty)
     cells = [(r, c) for r in range(H) for c in range(W) if board[r][c] != "."]
 

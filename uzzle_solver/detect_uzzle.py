@@ -286,8 +286,43 @@ def main():
     debug = bool(args.debug)
     smooth_n = max(1, int(args.smooth))
     hist = [[deque(maxlen=smooth_n) for _ in range(COLS)] for _ in range(ROWS)]
+    
+    frozen = False
+    frozen_overlay = None
+    freeze_cooldown = 0  # frames to wait before allowing freeze again
+    
+    def react_to_keys() -> bool:
+        """Return False to quit, True to continue."""
+        nonlocal frozen, frozen_overlay, debug, freeze_cooldown
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord("q"):
+            return False
+        if key == ord("r"):
+            frozen = False
+            frozen_overlay = None
+            freeze_cooldown = 10  # wait 30 frames before allowing freeze again
+            return True
+        if key == ord("d"):
+            debug = not debug
+            if not debug:
+                for win in ["CardBoxDebug", "WarpedInner+GridLines", "BlueMask", "WarpedInner+Labels"]:
+                    try:
+                        cv2.destroyWindow(win)
+                    except:
+                        pass
+        return True
 
     while True:
+        # If frozen, just display the frozen overlay and wait for input
+        if frozen:
+            if not react_to_keys():
+                break
+            continue
+        
+        # Decrement cooldown
+        if freeze_cooldown > 0:
+            freeze_cooldown -= 1
+        
         ok, frame = cap.read()
         if not ok:
             break
@@ -359,8 +394,22 @@ def main():
         if found:
             #TODO Remember to remove
             print(f'Rico: found checker board')
-            assignment = solve(labels=labels)
-            if assignment is not None:
+            
+            # Check if there are exactly 2 white/empty boxes
+            white_count = sum(1 for r in range(ROWS) for c in range(COLS) if labels[r][c] == "white")
+            if white_count != 2:
+                found = False  # Invalid configuration
+                cv2.putText(overlay,
+                            f"Invalid: {white_count} empty boxes (need 2)",
+                            (20, 120),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.8,
+                            (0, 0, 255),
+                            2,
+                            cv2.LINE_AA)
+            
+            assignment = solve(labels=labels) if found else None
+            if assignment is not None and freeze_cooldown == 0:
                 #TODO Remember to remove
                 print(f'Rico: found assignment')
                 for r in range(ROWS):
@@ -374,23 +423,19 @@ def main():
                                     (255, 0, 0),
                                     3,
                                     cv2.LINE_AA)
+                # Freeze after drawing the solution
+                frozen = True
+                frozen_overlay = overlay.copy()
+                cv2.imshow("Uzzle Detector", frozen_overlay)
+                continue
 
-        cv2.putText(overlay, "q=quit  d=debug on/off", (20, 80),
+        cv2.putText(overlay, "q=quit  d=debug on/off  r=resume", (20, 80),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2, cv2.LINE_AA)
 
         cv2.imshow("Uzzle Detector", overlay)
-
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord("q"):
+        
+        if not react_to_keys():
             break
-        if key == ord("d"):
-            debug = not debug
-            if not debug:
-                for win in ["CardBoxDebug", "WarpedInner+GridLines", "BlueMask", "WarpedInner+Labels"]:
-                    try:
-                        cv2.destroyWindow(win)
-                    except:
-                        pass
 
     cap.release()
     cv2.destroyAllWindows()
