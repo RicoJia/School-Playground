@@ -4,6 +4,7 @@ import numpy as np
 import argparse
 from collections import deque, Counter
 from typing import Optional, Tuple, List
+from solver import solve
 
 ROWS, COLS = 3, 4
 
@@ -355,6 +356,24 @@ def main():
                     (0, 255, 0) if found else (0, 0, 255),
                     2,
                     cv2.LINE_AA)
+        if found:
+            #TODO Remember to remove
+            print(f'Rico: found checker board')
+            assignment = solve(labels=labels)
+            if assignment is not None:
+                #TODO Remember to remove
+                print(f'Rico: found assignment')
+                for r in range(ROWS):
+                    for c in range(COLS):
+                        val = assignment[r][c]
+                        cv2.putText(overlay,
+                                    str(val),
+                                    (50 + c * 100, 100 + r * 100),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    1.5,
+                                    (255, 0, 0),
+                                    3,
+                                    cv2.LINE_AA)
 
         cv2.putText(overlay, "q=quit  d=debug on/off", (20, 80),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2, cv2.LINE_AA)
