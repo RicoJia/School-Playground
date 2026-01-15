@@ -1,18 +1,20 @@
 // Test 2: Many topics subscriber (>127 topics to test shared memory limits)
 #include "rclcpp/rclcpp.hpp"
-#include "std_msgs/msg/int32.hpp"
+#include "std_msgs/msg/byte_multi_array.hpp"
 #include <vector>
 #include <map>
 #include <mutex>
+#include <chrono>
+#include <numeric>
+#include <cstring>
 
 class ManyTopicsListener : public rclcpp::Node
 {
 public:
-  ManyTopicsListener(int node_num) : Node("many_topics_listener"), node_num_(node_num)
+  ManyTopicsListener(int node_num) : Node("many_topics_listener"), node_num_(node_num), total_latency_us_(0), total_messages_(0)
   {
-    // Iceoryx 2.0.5 has IOX_MAX_NUMBER_OF_NOTIFIERS=256 limit (subscribers with callbacks).
-    // Using 250 per node to stay safely under the 256 notifier limit with headroom.
-    const int NUM_TOPICS = 249;
+    // Creating 498 subscriptions
+    const int NUM_TOPICS = 498;
     
     RCLCPP_INFO(this->get_logger(), "Node %d: Creating %d subscriptions...", node_num_, NUM_TOPICS);
     
@@ -27,14 +29,44 @@ public:
     for (int i = 0; i < NUM_TOPICS; i++) {
       int topic_id = node_num_ * NUM_TOPICS + i;
       std::string topic_name = "test_topic_" + std::to_string(topic_id);
-      auto sub = this->create_subscription<std_msgs::msg::Int32>(
+      auto sub = this->create_subscription<std_msgs::msg::ByteMultiArray>(
         topic_name, qos,
-        [this, i, topic_id](const std_msgs::msg::Int32::SharedPtr msg) {
+        [this, i, topic_id](const std_msgs::msg::ByteMultiArray::SharedPtr msg) {
+          auto receive_time = std::chrono::high_resolution_clock::now();
+          
           std::lock_guard<std::mutex> lock(metrics_mutex_);
           receive_counts_[i]++;
-          // Log every 100 to reduce console spam
-          if (receive_counts_[i] % 10 == 0) {
-            RCLCPP_INFO(this->get_logger(), "Topic %d received %d messages", topic_id, receive_counts_[i]);
+          
+          // Extract timestamp from message
+          if (msg->data.size() >= 12) {
+            int64_t send_timestamp_ns;
+            int32_t msg_count;
+            std::memcpy(&send_timestamp_ns, &msg->data[0], sizeof(send_timestamp_ns));
+            std::memcpy(&msg_count, &msg->data[8], sizeof(msg_count));
+            
+            auto receive_timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+              receive_time.time_since_epoch()).count();
+            
+            int64_t latency_ns = receive_timestamp_ns - send_timestamp_ns;
+            int64_t latency_us = latency_ns / 1000;
+            
+            total_latency_us_ += latency_us;
+            total_messages_++;
+            latencies_.push_back(latency_us);
+            
+            // Keep only last 1000 latencies to compute rolling average
+            if (latencies_.size() > 1000) {
+              latencies_.erase(latencies_.begin());
+            }
+            
+            // Log every 10 messages to reduce console spam
+            if (receive_counts_[i] % 10 == 0) {
+              double avg_latency = total_latency_us_ / (double)total_messages_;
+              double rolling_avg = std::accumulate(latencies_.begin(), latencies_.end(), 0.0) / latencies_.size();
+              RCLCPP_INFO(this->get_logger(), 
+                         "Topic %d: msg %d (100B), latency=%ld µs, avg=%.1f µs, rolling_avg=%.1f µs",
+                         topic_id, msg_count, latency_us, avg_latency, rolling_avg);
+            }
           }
         },
         sub_options);
@@ -45,11 +77,14 @@ public:
   }
 
 private:
-  std::vector<rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr> subscriptions_;
+  std::vector<rclcpp::Subscription<std_msgs::msg::ByteMultiArray>::SharedPtr> subscriptions_;
   std::map<int, int> receive_counts_;
   std::mutex metrics_mutex_;
   rclcpp::CallbackGroup::SharedPtr callback_group_;
   int node_num_;
+  int64_t total_latency_us_;
+  int64_t total_messages_;
+  std::vector<int64_t> latencies_;
 };
 
 int main(int argc, char * argv[])

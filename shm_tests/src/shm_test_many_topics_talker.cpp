@@ -11,9 +11,8 @@ class ManyTopicsTalker : public rclcpp::Node
 public:
   ManyTopicsTalker(int node_num) : Node("many_topics_talker"), count_(0), node_num_(node_num)
   {
-    // Iceoryx 2.0.5 has IOX_MAX_NUMBER_OF_NOTIFIERS=256 limit.
-    // Using 250 per node to stay safely under the 256 notifier limit with headroom for ROS internals.
-    const int NUM_TOPICS = 250;
+    // Creating 498 publishers
+    const int NUM_TOPICS = 498;
     
     RCLCPP_INFO(this->get_logger(), "Node %d: Creating %d publishers...", node_num_, NUM_TOPICS);
     
