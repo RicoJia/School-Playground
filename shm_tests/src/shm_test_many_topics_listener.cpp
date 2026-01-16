@@ -1,13 +1,7 @@
 // Test 2: Many topics subscriber (>127 topics to test shared memory limits)
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/byte_multi_array.hpp"
-#include <vector>
-#include <map>
-#include <mutex>
-#include <chrono>
-#include <numeric>
-#include <algorithm>
-#include <cstring>
+#include <deque>
 
 class ManyTopicsListener : public rclcpp::Node
 {
@@ -19,10 +13,16 @@ public:
       total_messages_(0),
       last_report_time_(std::chrono::steady_clock::now())
   {
-    // Creating 498 subscriptions
-    const int NUM_TOPICS = 498;
+    // Declare ROS2 parameters
+    this->declare_parameter<int>("num_topics", 498);
+    this->declare_parameter<int>("message_length", 0);
     
-    RCLCPP_INFO(this->get_logger(), "Node %d: Creating %d subscriptions...", node_num_, NUM_TOPICS);
+    // Get parameter values
+    num_topics_ = this->get_parameter("num_topics").as_int();
+    message_length_ = this->get_parameter("message_length").as_int();
+    
+    RCLCPP_INFO(this->get_logger(), "Node %d: Creating %d subscriptions with expected %d byte messages...", 
+                node_num_, num_topics_, message_length_ + 8);
     
     // Use BestEffort + KeepLast(1) to prevent queue buildup
     auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
@@ -32,8 +32,8 @@ public:
     auto sub_options = rclcpp::SubscriptionOptions();
     sub_options.callback_group = callback_group_;
     
-    for (int i = 0; i < NUM_TOPICS; i++) {
-      int topic_id = node_num_ * NUM_TOPICS + i;
+    for (int i = 0; i < num_topics_; i++) {
+      int topic_id = node_num_ * num_topics_ + i;
       std::string topic_name = "test_topic_" + std::to_string(topic_id);
       auto sub = this->create_subscription<std_msgs::msg::ByteMultiArray>(
         topic_name, qos,
@@ -59,11 +59,6 @@ public:
             total_latency_us_ += latency_us;
             total_messages_++;
             latencies_.push_back(latency_us);
-            
-            // Keep only last 1000 latencies to compute rolling statistics
-            if (latencies_.size() > 1000) {
-              latencies_.erase(latencies_.begin());
-            }
           }
         },
         sub_options);
@@ -88,6 +83,12 @@ private:
       return;
     }
     
+    // Manage deque size - keep only last 1000 latencies
+    const size_t MAX_LATENCIES = 1000;
+    if (latencies_.size() > MAX_LATENCIES) {
+      latencies_.erase(latencies_.begin(), latencies_.begin() + (latencies_.size() - MAX_LATENCIES));
+    }
+    
     // Calculate statistics
     double avg_latency_us = total_latency_us_ / (double)total_messages_;
     
@@ -100,7 +101,7 @@ private:
     if (!latencies_.empty()) {
       rolling_avg_us = std::accumulate(latencies_.begin(), latencies_.end(), 0.0) / latencies_.size();
       
-      auto sorted_latencies = latencies_;
+      auto sorted_latencies = std::vector<int64_t>(latencies_.begin(), latencies_.end());
       std::sort(sorted_latencies.begin(), sorted_latencies.end());
       
       min_latency_us = sorted_latencies.front();
@@ -114,18 +115,13 @@ private:
       if (pair.second > 0) active_subs++;
     }
     
-    // Calculate message rate
-    auto now = std::chrono::steady_clock::now();
-    auto duration_s = std::chrono::duration_cast<std::chrono::milliseconds>(
-      now - last_report_time_).count() / 1000.0;
-    
     RCLCPP_INFO(this->get_logger(),
-                "Stats: total_msgs=%ld, active_topics=%d/%zu | "
+                "Stats: total_msgs=%ld, active_topics=%d/%d | "
                 "Latency: avg=%.1f µs, rolling_avg=%.1f µs, min=%.1f µs, max=%.1f µs, median=%.1f µs",
-                total_messages_, active_subs, subscriptions_.size(),
+                total_messages_, active_subs, num_topics_,
                 avg_latency_us, rolling_avg_us, min_latency_us, max_latency_us, median_latency_us);
     
-    last_report_time_ = now;
+    last_report_time_ = std::chrono::steady_clock::now();
   }
   
   std::vector<rclcpp::Subscription<std_msgs::msg::ByteMultiArray>::SharedPtr> subscriptions_;
@@ -134,9 +130,11 @@ private:
   rclcpp::CallbackGroup::SharedPtr callback_group_;
   rclcpp::TimerBase::SharedPtr stats_timer_;
   int node_num_;
+  int num_topics_;
+  int message_length_;
   int64_t total_latency_us_;
   int64_t total_messages_;
-  std::vector<int64_t> latencies_;
+  std::deque<int64_t> latencies_;
   std::chrono::steady_clock::time_point last_report_time_;
 };
 
@@ -145,8 +143,12 @@ int main(int argc, char * argv[])
   rclcpp::init(argc, argv);
   
   if (argc < 2) {
-    std::cerr << "Usage: " << argv[0] << " <node_num>" << std::endl;
+    std::cerr << "Usage: " << argv[0] << " <node_num> [--ros-args --param name:=value ...]" << std::endl;
     std::cerr << "  node_num: integer identifier for this node (e.g., 0, 1, 2...)" << std::endl;
+    std::cerr << "  ROS2 Parameters:" << std::endl;
+    std::cerr << "    --param num_topics:=N (default: 498)" << std::endl;
+    std::cerr << "    --param message_length:=N (default: 0)" << std::endl;
+    std::cerr << "Example: " << argv[0] << " 0 --ros-args --param num_topics:=100 --param message_length:=1024" << std::endl;
     return 1;
   }
   
