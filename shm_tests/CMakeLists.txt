@@ -9,6 +9,14 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+
+# Generate custom messages
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/FixedSizeData.msg"
+  "msg/FixedData1KB.msg"
+  "msg/FixedData15KB.msg"
+)
 
 # dynamic size executables
 add_executable(shm_test_dynamic_size_talker src/shm_test_dynamic_size_talker.cpp)
@@ -27,9 +35,11 @@ ament_target_dependencies(shm_test_large_msgs_listener rclcpp std_msgs)
 # many topics executables
 add_executable(shm_test_many_topics_talker src/shm_test_many_topics_talker.cpp)
 ament_target_dependencies(shm_test_many_topics_talker rclcpp std_msgs)
+rosidl_target_interfaces(shm_test_many_topics_talker ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
 add_executable(shm_test_many_topics_listener src/shm_test_many_topics_listener.cpp)
 ament_target_dependencies(shm_test_many_topics_listener rclcpp std_msgs)
+rosidl_target_interfaces(shm_test_many_topics_listener ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
 install(TARGETS
   shm_test_dynamic_size_talker
