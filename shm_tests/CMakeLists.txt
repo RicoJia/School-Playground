@@ -13,7 +13,7 @@ find_package(rosidl_default_generators REQUIRED)
 
 # Generate custom messages
 rosidl_generate_interfaces(${PROJECT_NAME}
-  "msg/FixedSizeData.msg"
+  "msg/FixedData128B.msg"
   "msg/FixedData1KB.msg"
   "msg/FixedData15KB.msg"
 )
