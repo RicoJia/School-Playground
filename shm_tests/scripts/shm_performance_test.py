@@ -16,10 +16,11 @@ import sys
 
 TOPICS_PER_NODE = 3      # Topics per node
 
+
 def _start_processes(num_nodes, num_TOPICS_PER_NODE, message_size, use_shm, zero_copy):
     """
     Start the talker and listener processes for testing.
-    
+
     Returns:
         tuple: (talker_procs, listener_procs, output_files, transport)
     """
@@ -29,15 +30,15 @@ def _start_processes(num_nodes, num_TOPICS_PER_NODE, message_size, use_shm, zero
         transport = "SHM"
     else:
         transport = "UDP"
-    
+
     # Setup environment
     env = os.environ.copy()
     if use_shm:
         env['CYCLONEDDS_URI'] = 'file:///root/toolkitt_ws/src/shm_tests/src/shm_tests/configs/cyclonedds_shm.xml'
-    
+
     # Build command arguments
     zero_copy_arg = str(zero_copy).lower()
-    
+
     talker_procs = []
     listener_procs = []
     output_files = []
@@ -54,7 +55,8 @@ def _start_processes(num_nodes, num_TOPICS_PER_NODE, message_size, use_shm, zero
         cmd = (
             "cd /root/toolkitt_ws && "
             "source install/setup.bash && "
-            f"ros2 run shm_tests shm_test_many_topics_{role} {node_id} --ros-args "
+            f"ros2 run shm_tests shm_test_many_topics_{role} --ros-args "
+            f"--param node_num:={node_id} "
             f"--param num_topics:={num_TOPICS_PER_NODE} "
             f"--param message_size:={message_size} "
             f"--param zero_copy:={zero_copy_arg}"
@@ -68,21 +70,21 @@ def _start_processes(num_nodes, num_TOPICS_PER_NODE, message_size, use_shm, zero
             start_new_session=True,   # NEW process group/session; proc.pid == pgid
         )
         return proc, f, outfile
- 
+
     # Start listeners
     for node_id in range(num_nodes):
         proc, f, _ = _spawn("listener", node_id)
         listener_procs.append((proc, f))
 
-
     # Give listeners time to start
     time.sleep(2)
-    
+
     for node_id in range(num_nodes):
         proc, f, _ = _spawn("talker", node_id)
         talker_procs.append((proc, f))
 
     return talker_procs, listener_procs, output_files, transport
+
 
 def _kill_processes(talker_procs, listener_procs, term_timeout=5.0, kill_timeout=2.0):
     """
@@ -95,7 +97,7 @@ def _kill_processes(talker_procs, listener_procs, term_timeout=5.0, kill_timeout
         except ProcessLookupError:
             # process already killed
             pass
-    
+
     # 2) Reap anything that exits during the grace window
     deadline = time.time() + term_timeout
     alive = []
@@ -133,7 +135,7 @@ def _kill_processes(talker_procs, listener_procs, term_timeout=5.0, kill_timeout
 def _parse_file_outputs(output_files, transport, num_nodes):
     """
     Parse output files from talker and listener processes.
-    
+
     Returns:
         tuple: (avg_talker_latency_us, avg_listener_latency_us, total_msg_count) or None if failed
     """
@@ -141,15 +143,15 @@ def _parse_file_outputs(output_files, transport, num_nodes):
     talker_avgs = []
     listener_avgs = []
     listener_msg_counts = []
-    
+
     for file_type, filepath in output_files:
         if not os.path.exists(filepath):
             print(f"  Warning: {filepath} not found")
             continue
-            
+
         with open(filepath, 'r') as f:
             content = f.read()
-        
+
         found_stats = False
         if file_type == 'talker':
             # Parse talker output
@@ -174,7 +176,7 @@ def _parse_file_outputs(output_files, transport, num_nodes):
                         listener_msg_counts.append(int(msg_match.group(1)))
                         found_stats = True
                         break
-        
+
         # If stats not found, show the output for debugging
         if not found_stats:
             print(f"  {transport} {file_type} output from {os.path.basename(filepath)}:")
@@ -183,7 +185,7 @@ def _parse_file_outputs(output_files, transport, num_nodes):
             for line in lines[-30:]:
                 if line.strip():
                     print(f"    {line}")
-        
+
         # Clean up output file
         # os.remove(filepath)
         print(f"Tmp file path: {filepath}")
@@ -202,6 +204,7 @@ def _parse_file_outputs(output_files, transport, num_nodes):
         print(f"  {transport} Failed to parse: talker_count={len(talker_avgs)}, listener_count={len(listener_avgs)}, msg_count={len(listener_msg_counts)}")
         return None
 
+
 def run_test(num_nodes, num_TOPICS_PER_NODE, message_size="1KB", test_duration=10.0, use_shm=False, zero_copy=False):
     """
     Run a test with multiple nodes, each handling multiple topics.
@@ -219,25 +222,26 @@ def run_test(num_nodes, num_TOPICS_PER_NODE, message_size="1KB", test_duration=1
     """
     if not use_shm:
         zero_copy = False
-    
+
     mode_str = "zero-copy" if zero_copy else "standard"
-    
+
     talker_procs, listener_procs, output_files, transport = _start_processes(num_nodes, num_TOPICS_PER_NODE, message_size, use_shm, zero_copy)
-    
+
     print(f"Testing {transport}: {num_nodes} nodes × {num_TOPICS_PER_NODE} topics/node, {message_size} ({mode_str})...")
-    
+
     # Wait for test duration
     time.sleep(test_duration)
-    
+
     _kill_processes(talker_procs, listener_procs)
-    
+
     time.sleep(5)
-    
+
     return _parse_file_outputs(output_files, transport, num_nodes)
 
+
 def plot_performance(udp_topics, udp_talker_avgs, udp_listener_avgs, udp_msg_counts,
-                    shm_topics, shm_talker_avgs, shm_listener_avgs, shm_msg_counts,
-                    shm_zc_topics, shm_zc_talker_avgs, shm_zc_listener_avgs, shm_zc_msg_counts, message_size):
+                     shm_topics, shm_talker_avgs, shm_listener_avgs, shm_msg_counts,
+                     shm_zc_topics, shm_zc_talker_avgs, shm_zc_listener_avgs, shm_zc_msg_counts, message_size):
     # Create plot with 3 subplots (talker, listener, and message count)
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 6))
     fig.suptitle(f'Performance vs Number of Topics ({TOPICS_PER_NODE} per node) - {message_size}', fontsize=16, fontweight='bold')
@@ -249,13 +253,13 @@ def plot_performance(udp_topics, udp_talker_avgs, udp_listener_avgs, udp_msg_cou
         ax1.plot(shm_topics, shm_talker_avgs, 'r-s', label='SHM', linewidth=2, markersize=8)
     if shm_zc_talker_avgs:
         ax1.plot(shm_zc_topics, shm_zc_talker_avgs, 'g-^', label='SHM Zero-Copy', linewidth=2, markersize=8)
-    
+
     ax1.set_title('Talker Performance (Publish Time)', fontsize=13, fontweight='bold')
     ax1.set_xlabel('Number of Topics', fontsize=12)
     ax1.set_ylabel('Avg Time per Topic (µs)', fontsize=12)
     ax1.grid(True, alpha=0.3)
     ax1.legend(fontsize=11)
-    
+
     # Add values on the plot
     for x, y in zip(udp_topics, udp_talker_avgs) if udp_talker_avgs else []:
         ax1.text(x, y, f'{y:.1f}', fontsize=9, ha='center', va='bottom')
@@ -271,13 +275,13 @@ def plot_performance(udp_topics, udp_talker_avgs, udp_listener_avgs, udp_msg_cou
         ax2.plot(shm_topics, shm_listener_avgs, 'r-s', label='SHM', linewidth=2, markersize=8)
     if shm_zc_listener_avgs:
         ax2.plot(shm_zc_topics, shm_zc_listener_avgs, 'g-^', label='SHM Zero-Copy', linewidth=2, markersize=8)
-    
+
     ax2.set_title('Listener Performance (Latency)', fontsize=13, fontweight='bold')
     ax2.set_xlabel('Number of Topics', fontsize=12)
     ax2.set_ylabel('Avg Latency (µs)', fontsize=12)
     ax2.grid(True, alpha=0.3)
     ax2.legend(fontsize=11)
-    
+
     # Add values on the plot
     for x, y in zip(udp_topics, udp_listener_avgs) if udp_listener_avgs else []:
         ax2.text(x, y, f'{y:.1f}', fontsize=9, ha='center', va='bottom')
@@ -293,13 +297,13 @@ def plot_performance(udp_topics, udp_talker_avgs, udp_listener_avgs, udp_msg_cou
         ax3.plot(shm_topics, shm_msg_counts, 'r-s', label='SHM', linewidth=2, markersize=8)
     if shm_zc_msg_counts:
         ax3.plot(shm_zc_topics, shm_zc_msg_counts, 'g-^', label='SHM Zero-Copy', linewidth=2, markersize=8)
-    
+
     ax3.set_title('Messages Received', fontsize=13, fontweight='bold')
     ax3.set_xlabel('Number of Topics', fontsize=12)
     ax3.set_ylabel('Total Messages Received', fontsize=12)
     ax3.grid(True, alpha=0.3)
     ax3.legend(fontsize=11)
-    
+
     # Add values on the plot
     for x, y in zip(udp_topics, udp_msg_counts) if udp_msg_counts else []:
         ax3.text(x, y, f'{y}', fontsize=9, ha='center', va='bottom')
@@ -309,7 +313,7 @@ def plot_performance(udp_topics, udp_talker_avgs, udp_listener_avgs, udp_msg_cou
         ax3.text(x, y, f'{y}', fontsize=9, ha='center', va='bottom')
 
     plt.tight_layout()
-    
+
     # Save with message size in filename
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M")
     plot_filename = f'multi-node-performance_{message_size.replace(" ", "_")}_{timestamp}.png'
@@ -317,6 +321,7 @@ def plot_performance(udp_topics, udp_talker_avgs, udp_listener_avgs, udp_msg_cou
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
     print(f"  Plot saved: {plot_path}")
     plt.close()
+
 
 def print_performance(results, header: str):
     # Print summary tables
@@ -330,10 +335,11 @@ def print_performance(results, header: str):
     else:
         print("No results")
 
+
 def main():
     """Main testing function."""
     # Test parameters
-    node_counts = [1, 5, 10, 15, 20]# Number of talker/listener pairs
+    node_counts = [1, 5, 10, 15, 20]  # Number of talker/listener pairs
     message_sizes = ["128B", "1KB", "15KB"]  # Message sizes to test
 
     # node_counts = [1]# Number of talker/listener pairs
@@ -374,24 +380,24 @@ def main():
     for msg_size in message_sizes:
         print(f"\n{'='*70}")
         print(f"=== Testing with {msg_size} messages ===")
-        print('='*70)
-        
+        print('=' * 70)
+
         for num_nodes in node_counts:
             print(f"\n--- Testing with {num_nodes} nodes × {TOPICS_PER_NODE} topics/node ---")
             total_topics = num_nodes * TOPICS_PER_NODE
-            
+
             # Test UDP mode
             print(f"  UDP Mode ({msg_size}, {num_nodes} nodes)...")
             result = run_test(num_nodes, TOPICS_PER_NODE, msg_size, test_duration, use_shm=False, zero_copy=False)
             if result:
                 udp_results.append((total_topics, msg_size, *result))  # (topics, msg_size, talker_avg, listener_avg, msg_count)
-            
+
             # Test SHM standard mode
             print(f"  SHM Standard Mode ({msg_size}, {num_nodes} nodes)...")
             result = run_test(num_nodes, TOPICS_PER_NODE, msg_size, test_duration, use_shm=True, zero_copy=False)
             if result:
                 shm_results.append((total_topics, msg_size, *result))  # (topics, msg_size, talker_avg, listener_avg, msg_count)
-            
+
             # Test SHM zero-copy mode
             print(f"  SHM Zero-Copy Mode ({msg_size}, {num_nodes} nodes)...")
             result = run_test(num_nodes, TOPICS_PER_NODE, msg_size, test_duration, use_shm=True, zero_copy=True)
@@ -404,49 +410,49 @@ def main():
 
     subprocess.run(["pkill", "-9", "-f", "iox-roudi"], capture_output=True)
     time.sleep(2)
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("RouDi stopped.")
-    print("="*70)
-    
+    print("=" * 70)
+
     print_performance(udp_results, "UDP")
     print_performance(shm_results, "SHM Standard")
     print_performance(shm_zc_results, "SHM Zero-Copy")
-    
+
     # Generate plots for each message size
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("Generating performance plots...")
-    print("="*70)
-    
+    print("=" * 70)
+
     for msg_size in message_sizes:
         # Filter results for this message size
         udp_data = [(r[0], r[2], r[3], r[4]) for r in udp_results if r[1] == msg_size]
         shm_data = [(r[0], r[2], r[3], r[4]) for r in shm_results if r[1] == msg_size]
         shm_zc_data = [(r[0], r[2], r[3], r[4]) for r in shm_zc_results if r[1] == msg_size]
-        
+
         if not udp_data and not shm_data and not shm_zc_data:
             continue
-        
+
         # Extract data for plotting
         udp_topics = [d[0] for d in udp_data]
         udp_talker_avgs = [d[1] for d in udp_data]
         udp_listener_avgs = [d[2] for d in udp_data]
         udp_msg_counts = [d[3] for d in udp_data]
-        
+
         shm_topics = [d[0] for d in shm_data]
         shm_talker_avgs = [d[1] for d in shm_data]
         shm_listener_avgs = [d[2] for d in shm_data]
         shm_msg_counts = [d[3] for d in shm_data]
-        
+
         shm_zc_topics = [d[0] for d in shm_zc_data]
         shm_zc_talker_avgs = [d[1] for d in shm_zc_data]
         shm_zc_listener_avgs = [d[2] for d in shm_zc_data]
         shm_zc_msg_counts = [d[3] for d in shm_zc_data]
-        
+
         # Generate plot
         plot_performance(udp_topics, udp_talker_avgs, udp_listener_avgs, udp_msg_counts,
-                        shm_topics, shm_talker_avgs, shm_listener_avgs, shm_msg_counts,
-                        shm_zc_topics, shm_zc_talker_avgs, shm_zc_listener_avgs, shm_zc_msg_counts,
-                        f"{msg_size} messages")
+                         shm_topics, shm_talker_avgs, shm_listener_avgs, shm_msg_counts,
+                         shm_zc_topics, shm_zc_talker_avgs, shm_zc_listener_avgs, shm_zc_msg_counts,
+                         f"{msg_size} messages")
 
 
 if __name__ == "__main__":

@@ -23,17 +23,18 @@ extern "C" void signal_handler(int sig) {
 
 class ManyTopicsListener : public rclcpp::Node {
 public:
-  explicit ManyTopicsListener(int node_num)
-  : Node("many_topics_listener"),
-    node_num_(node_num)
+  explicit ManyTopicsListener()
+  : Node("many_topics_listener")
   {
+    this->declare_parameter<int>("node_num", 0);
     this->declare_parameter<int>("num_topics", 10);
     this->declare_parameter<std::string>("message_size", "1KB");  // "128B", "1KB", or "15KB"
     this->declare_parameter<bool>("zero_copy", false);
 
-    num_topics_      = this->get_parameter("num_topics").as_int();
-    message_size_    = this->get_parameter("message_size").as_string();
-    zero_copy_       = this->get_parameter("zero_copy").as_bool();
+    node_num_      = this->get_parameter("node_num").as_int();
+    num_topics_    = this->get_parameter("num_topics").as_int();
+    message_size_  = this->get_parameter("message_size").as_string();
+    zero_copy_     = this->get_parameter("zero_copy").as_bool();
 
     const std::string mode = zero_copy_ ? "zero-copy" : "standard";
 
@@ -116,20 +117,13 @@ private:
 
 
 int main(int argc, char* argv[]) {
-  if (argc < 2) {
-    std::cerr << "Usage: " << argv[0] << " <node_num> [--ros-args --param ...]\n";
-    return 1;
-  }
-
-  const int node_num = std::atoi(argv[1]);
-  
   // Install our signal handlers BEFORE rclcpp::init to override ROS2's signal handling
   std::signal(SIGINT, signal_handler);
   std::signal(SIGTERM, signal_handler);
 
   rclcpp::init(argc, argv, rclcpp::InitOptions(), rclcpp::SignalHandlerOptions::None);
 
-  auto node = std::make_shared<ManyTopicsListener>(node_num);
+  auto node = std::make_shared<ManyTopicsListener>();
   
   // Use MultiThreadedExecutor for better performance
   rclcpp::executors::MultiThreadedExecutor exec(rclcpp::ExecutorOptions(), 

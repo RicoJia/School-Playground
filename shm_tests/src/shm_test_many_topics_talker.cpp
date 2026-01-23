@@ -13,14 +13,16 @@ using namespace std::chrono_literals;
 class ManyTopicsTalker : public rclcpp::Node
 {
 public:
-  ManyTopicsTalker(int node_num) : Node("many_topics_talker"), count_(0), node_num_(node_num)
+  ManyTopicsTalker() : Node("many_topics_talker"), count_(0)
   {
     // Declare ROS2 parameters
+    this->declare_parameter<int>("node_num", 0);
     this->declare_parameter<int>("num_topics", 10);
     this->declare_parameter<std::string>("message_size", "1KB");  // "128B", "1KB", or "15KB"
     this->declare_parameter<bool>("zero_copy", false);
     
     // Get parameter values
+    node_num_ = this->get_parameter("node_num").as_int();
     num_topics_ = this->get_parameter("num_topics").as_int();
     message_size_ = this->get_parameter("message_size").as_string();
     zero_copy_ = this->get_parameter("zero_copy").as_bool();
@@ -299,24 +301,7 @@ int main(int argc, char * argv[])
 {
   rclcpp::init(argc, argv);
   
-  if (argc < 2) {
-    std::cerr << "Usage: " << argv[0] << " <node_num> [--ros-args --param name:=value ...]" << std::endl;
-    std::cerr << "  node_num: integer identifier for this node (e.g., 0, 1, 2...)" << std::endl;
-    std::cerr << "  ROS2 Parameters:" << std::endl;
-    std::cerr << "    --param num_topics:=N (default: 10)" << std::endl;
-    std::cerr << "    --param message_size:=SIZE (default: 1KB, options: 128B, 1KB, 15KB)" << std::endl;
-    std::cerr << "    --param zero_copy:=true/false (default: true)" << std::endl;
-    std::cerr << "Example: " << argv[0] << " 0 --ros-args --param num_topics:=10 --param message_size:=1KB --param zero_copy:=true" << std::endl;
-    return 1;
-  }
-  
-  int node_num = std::atoi(argv[1]);
-  if (node_num < 0) {
-    std::cerr << "Error: node_num must be non-negative" << std::endl;
-    return 1;
-  }
-  
-  rclcpp::spin(std::make_shared<ManyTopicsTalker>(node_num));
+  rclcpp::spin(std::make_shared<ManyTopicsTalker>());
   rclcpp::shutdown();
   return 0;
 }

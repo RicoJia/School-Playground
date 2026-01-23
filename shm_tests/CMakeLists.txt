@@ -51,4 +51,12 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+# Install Python scripts
+install(PROGRAMS
+  scripts/two_container_shm_performance_test.py
+  scripts/shm_performance_test_utils.py
+  scripts/shm_performance_test.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 ament_package()
