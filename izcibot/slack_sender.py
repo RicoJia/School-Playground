@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 from slack_sdk import WebClient
 import os
 from dotenv import load_dotenv
