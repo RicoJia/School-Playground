@@ -2,6 +2,7 @@ import feedparser
 import datetime
 import re
 import sqlite3
+import xml.etree.ElementTree as ET
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, unquote
@@ -99,46 +100,132 @@ class FetchRSS(FetcherBase):
 
 class FetchGithubBlogs(FetcherBase):
     """
-    Scrape one or more GitHub Pages / Jekyll blogs.
+    Scrape a single GitHub Pages / Jekyll blog.
 
-    For each base URL:
-      1. Crawl the index (and /page/N/ pagination) to collect post URLs.
-      2. Identify post URLs by the Jekyll date path /YYYY/MM/DD/.
-      3. Sort posts newest-first by that date.
-      4. Return posts as dicts compatible with the rest of the pipeline.
+    1. Try /sitemap.xml — parse <loc> + <lastmod> for accurate post dates.
+    2. Fall back to crawling the index pages if no sitemap is available.
+       Handles both /page/2/ and /page2/ pagination styles.
+       Detects posts by Jekyll date path (/YYYY/MM/DD/) or by heading links.
+    3. Sort posts newest-first by date.
+    4. Return posts as dicts compatible with the rest of the pipeline.
     """
 
     _DATE_RE = re.compile(r"/(\d{4})/(\d{2})/(\d{2})/")
+    _SITEMAP_NS = "http://www.sitemaps.org/schemas/sitemap/0.9"
+    # URL path segments that indicate non-post pages
+    _SKIP_SEGMENTS = (
+        "/tags",
+        "/categories",
+        "/about",
+        "/feed",
+        "/page",
+        "/search",
+        "/archive",
+        "/_posts",
+    )
 
-    def __init__(self, name: str, base_urls: list[str], days: int = 100000):
+    def __init__(self, name: str, base_url: str, days: int = 100000):
         super().__init__(name, days=days)
-        self.base_urls = base_urls
+        self.base_url = base_url
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _collect_post_urls(self, base_url: str) -> list[tuple[datetime.date, str]]:
-        """Return (post_date, abs_url) pairs from the blog index, newest-first."""
-        session = requests.Session()
-        session.headers.update({"User-Agent": "Mozilla/5.0"})
+    def _session(self) -> requests.Session:
+        s = requests.Session()
+        s.headers.update({"User-Agent": "Mozilla/5.0"})
+        return s
 
+    def _try_sitemap(self, base_url: str) -> list[tuple[datetime.date, str]] | None:
+        """Fetch and parse /sitemap.xml. Returns None if unavailable."""
+        sitemap_url = base_url.rstrip("/") + "/sitemap.xml"
+        try:
+            r = self._session().get(sitemap_url, timeout=10)
+            if r.status_code != 200:
+                return None
+            root = ET.fromstring(r.content)
+            ns = {"sm": self._SITEMAP_NS}
+            items: list[tuple[datetime.date, str]] = []
+            for url_el in root.findall("sm:url", ns):
+                loc_el = url_el.find("sm:loc", ns)
+                lastmod_el = url_el.find("sm:lastmod", ns)
+                if loc_el is None or not loc_el.text:
+                    continue
+                loc = loc_el.text.strip().rstrip("/")
+                # Skip obvious non-post URLs
+                path = loc.replace(base_url.rstrip("/"), "")
+                if any(path.startswith(s) for s in self._SKIP_SEGMENTS):
+                    continue
+                if loc == base_url.rstrip("/"):
+                    continue
+                # Skip single-segment paths like /sitemap, /about, /portfolio
+                if path.count("/") < 2:
+                    continue
+                # Skip index/listing pages (e.g. Hexo's /markdown/index.html)
+                if loc.split("/")[-1] == "index.html":
+                    continue
+                # Parse date from lastmod, then URL, then today as fallback
+                post_date = None
+                if lastmod_el is not None and lastmod_el.text:
+                    try:
+                        post_date = datetime.date.fromisoformat(
+                            lastmod_el.text.strip()[:10]
+                        )
+                    except ValueError:
+                        pass
+                if post_date is None:
+                    m = self._DATE_RE.search(loc)
+                    if m:
+                        post_date = datetime.date(
+                            int(m.group(1)), int(m.group(2)), int(m.group(3))
+                        )
+                if post_date is None:
+                    post_date = datetime.date.today()
+                items.append((post_date, loc))
+            items.sort(key=lambda x: x[0], reverse=True)
+            return items if items else None
+        except Exception:
+            return None
+
+    def _crawl_index(self, base_url: str) -> list[tuple[datetime.date, str]]:
+        """Crawl the blog index pages to collect post URLs when no sitemap exists."""
+        session = self._session()
         seen: set[str] = set()
         page = 1
 
         while True:
-            url = base_url if page == 1 else f"{base_url.rstrip('/')}/page/{page}/"
+            # Try both /page/N/ and /pageN/ pagination styles
+            if page == 1:
+                url = base_url
+            else:
+                url = f"{base_url.rstrip('/')}/page/{page}/"
             r = session.get(url, timeout=20)
+            if r.status_code == 404 and page > 1:
+                # Try alternate pagination style: /page2/
+                url = f"{base_url.rstrip('/')}/page{page}/"
+                r = session.get(url, timeout=20)
             if r.status_code == 404:
                 break
             r.raise_for_status()
             soup = BeautifulSoup(r.text, "html.parser")
 
             found_new = False
-            for a in soup.find_all("a", href=True):
+            # Prefer post links from headings (more reliable than all <a> tags)
+            candidates = soup.select("h1 a[href], h2 a[href], h3 a[href]")
+            if not candidates:
+                candidates = soup.find_all("a", href=True)
+            for a in candidates:
                 abs_url = urljoin(base_url, a["href"]).rstrip("/")
-                m = self._DATE_RE.search(abs_url)
-                if m and abs_url not in seen:
+                # Must be on same host, not a skip segment, not base itself
+                if not abs_url.startswith(base_url.rstrip("/")):
+                    continue
+                path = abs_url.replace(base_url.rstrip("/"), "")
+                if any(path.startswith(s) for s in self._SKIP_SEGMENTS):
+                    continue
+                if abs_url == base_url.rstrip("/"):
+                    continue
+                if abs_url not in seen:
                     seen.add(abs_url)
                     found_new = True
 
@@ -149,14 +236,21 @@ class FetchGithubBlogs(FetcherBase):
         items: list[tuple[datetime.date, str]] = []
         for u in seen:
             m = self._DATE_RE.search(u)
-            if m:
-                post_date = datetime.date(
-                    int(m.group(1)), int(m.group(2)), int(m.group(3))
-                )
-                items.append((post_date, u))
-
-        items.sort(key=lambda x: x[0], reverse=True)  # newest first
+            post_date = (
+                datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                if m
+                else datetime.date.today()
+            )
+            items.append((post_date, u))
+        items.sort(key=lambda x: x[0], reverse=True)
         return items
+
+    def _collect_post_urls(self, base_url: str) -> list[tuple[datetime.date, str]]:
+        """Try sitemap first, fall back to index crawl."""
+        result = self._try_sitemap(base_url)
+        if result is not None:
+            return result
+        return self._crawl_index(base_url)
 
     def _scrape_post(self, url: str) -> tuple[str, str]:
         """Fetch a post page and return (title, body_text)."""
@@ -195,24 +289,20 @@ class FetchGithubBlogs(FetcherBase):
         cutoff = datetime.datetime.now() - datetime.timedelta(days=self.days)
         items: list[dict] = []
 
-        for base_url in self.base_urls:
-            dated_posts = self._collect_post_urls(base_url)
-
-            for post_date, post_url in dated_posts:
-                pub_dt = datetime.datetime.combine(post_date, datetime.time.min)
-                if pub_dt < cutoff:
-                    continue
-
-                title, content = self._scrape_post(post_url)
-                items.append(
-                    {
-                        "title": title,
-                        "link": post_url,
-                        "pub_date": pub_dt,
-                        "content": content,
-                        "source": self.name,
-                    }
-                )
+        for post_date, post_url in self._collect_post_urls(self.base_url):
+            pub_dt = datetime.datetime.combine(post_date, datetime.time.min)
+            if pub_dt < cutoff:
+                continue
+            title, content = self._scrape_post(post_url)
+            items.append(
+                {
+                    "title": title,
+                    "link": post_url,
+                    "pub_date": pub_dt,
+                    "content": content,
+                    "source": self.name,
+                }
+            )
 
         items.sort(key=lambda x: x["pub_date"])
         return items
@@ -271,19 +361,17 @@ if __name__ == "__main__":
     # for item in items:
     #     print(f"{item['title']} ({item['link']})")
 
-    fetcher = FetchGithubBlogs(
-        name="Github Blogs",
-        base_urls=[
-            "https://aipiano.github.io",
-            # "https://udohsolomon.github.io/"
-            # "https://adaning.github.io/"
-        ],
-    )
-    items = fetcher.fetch()
-    print(f"Fetched {len(items)} items from {fetcher.name}")
-    db_mgr = DatabaseManager("test_github_blogs.db")
-    for item in items:
-        if not db_mgr.entry_exists(item["link"]):
-            print(f"New post: {item['title']}")
-            db_mgr.mark_as_seen(item["link"])
-            break
+    fetchers = [
+        FetchGithubBlogs(name="aipiano", base_url="https://aipiano.github.io"),
+        FetchGithubBlogs(name="udohsolomon", base_url="https://udohsolomon.github.io"),
+        FetchGithubBlogs(name="adaning", base_url="https://adaning.github.io"),
+    ]
+    for fetcher in fetchers:
+        items = fetcher.fetch()
+        print(f"Fetched {len(items)} items from {fetcher.name}")
+        db_mgr = DatabaseManager("test_github_blogs.db")
+        for item in items:
+            if not db_mgr.entry_exists(item["link"]):
+                print(f"New post: {item['title']}")
+                db_mgr.mark_as_seen(item["link"])
+                break
