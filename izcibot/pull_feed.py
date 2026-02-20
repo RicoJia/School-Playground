@@ -124,9 +124,10 @@ class FetchGithubBlogs(FetcherBase):
         "/_posts",
     )
 
-    def __init__(self, name: str, base_url: str, days: int = 100000):
+    def __init__(self, name: str, base_url: str, days: int = 100000, db_path: str = "izci_seen.db"):
         super().__init__(name, days=days)
         self.base_url = base_url
+        self.db_path = db_path
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -286,26 +287,32 @@ class FetchGithubBlogs(FetcherBase):
     # ------------------------------------------------------------------
 
     def fetch(self) -> list[dict]:
+        """Return at most one post — the oldest unseen one.
+        Walks posts oldest-first so a blog is drained old→new before
+        the caller moves on to the next blog.
+        """
+        db = DatabaseManager(self.db_path)
         cutoff = datetime.datetime.now() - datetime.timedelta(days=self.days)
-        items: list[dict] = []
 
-        for post_date, post_url in self._collect_post_urls(self.base_url):
+        all_posts = self._collect_post_urls(self.base_url)  # newest-first
+        for post_date, post_url in reversed(all_posts):      # now oldest-first
             pub_dt = datetime.datetime.combine(post_date, datetime.time.min)
             if pub_dt < cutoff:
                 continue
+            if db.entry_exists(post_url):
+                continue
             title, content = self._scrape_post(post_url)
-            items.append(
-                {
-                    "title": title,
-                    "link": post_url,
-                    "pub_date": pub_dt,
-                    "content": content,
-                    "source": self.name,
-                }
-            )
+            db.mark_as_seen(post_url)
+            return [{
+                "title": title,
+                "link": post_url,
+                "pub_date": pub_dt,
+                "content": content,
+                "source": self.name,
+                "is_academic": True,
+            }]
 
-        items.sort(key=lambda x: x["pub_date"])
-        return items
+        return []
 
 
 class DatabaseManager:

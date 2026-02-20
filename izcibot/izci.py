@@ -21,30 +21,63 @@ from functools import partial
 import slack_sender
 
 TIME_RANGE = 1
+DEFAULT_MODEL = "qwen2.5:7b"
+ACADEMIC_MODEL = "glm4"
+
+
+def summarize_item(item: dict) -> str:
+    """Run an Ollama model to summarize or explain an item.
+    Academic posts (from FetchGithubBlogs) get a concept-explanation prompt
+    with GLM; all others get a news-summary prompt with the default model.
+    """
+    if item.get("is_academic"):
+        model = ACADEMIC_MODEL
+        prompt = (
+            f"You are reading a technical/academic blog post. "
+            f"Explain the key concepts in 3-5 sentences. "
+            f"Include important mathematical ideas or equations where helpful.\n\n"
+            f"Title: {item['title']}\n"
+            f"Content: {item['content']}\n\n"
+            f"Output ONLY the explanation, nothing else."
+        )
+    else:
+        model = DEFAULT_MODEL
+        prompt = (
+            f"Summarize this article in 2-3 sentences. "
+            f"Include the key details: who, what, when, where, why. Be specific and informative.\n\n"
+            f"Title: {item['title']}\n"
+            f"Content: {item['content']}\n\n"
+            f"Output ONLY the summary, nothing else."
+        )
+    result = subprocess.run(
+        ["ollama", "run", model],
+        input=prompt,
+        text=True,
+        capture_output=True,
+    )
+    return result.stdout.strip()
+
 
 fetchers = [
-    FetchRSS(name="UBC", url="https://www.reddit.com/r/UBC/.rss", days=TIME_RANGE),
-    FetchRSS(
-        name="Jeff Geerling",
-        url="https://www.jeffgeerling.com/blog.xml",
-        days=TIME_RANGE,
-    ),
-    FetchGoogleNews(
-        name="Nauticus Robotics (Google News)",
-        query="Nauticus Robotics",
-        days=TIME_RANGE,
-        additional_per_item_filters=[partial(filter_min_content_length, min_chars=200)],
-        additional_total_filters=[generate_consolidated_summary],
-    ),
+    # FetchRSS(name="UBC", url="https://www.reddit.com/r/UBC/.rss", days=TIME_RANGE),
+    # FetchRSS(
+    #     name="Jeff Geerling",
+    #     url="https://www.jeffgeerling.com/blog.xml",
+    #     days=TIME_RANGE,
+    # ),
+    # FetchGoogleNews(
+    #     name="Nauticus Robotics (Google News)",
+    #     query="Nauticus Robotics",
+    #     days=TIME_RANGE,
+    #     additional_per_item_filters=[partial(filter_min_content_length, min_chars=200)],
+    #     additional_total_filters=[generate_consolidated_summary],
+    # ),
 ]
 
 academic_fetchers = [
-    FetchGithubBlogs(
-        name="Github Blogs",
-        base_urls=[
-            "https://aipiano.github.io",
-        ],
-    )
+    FetchGithubBlogs(name="aipiano", base_url="https://aipiano.github.io"),
+    FetchGithubBlogs(name="udohsolomon", base_url="https://udohsolomon.github.io"),
+    FetchGithubBlogs(name="adaning", base_url="https://adaning.github.io"),
 ]
 
 if __name__ == "__main__":
@@ -52,8 +85,15 @@ if __name__ == "__main__":
     all_items = []
 
     for fetcher in fetchers:
-        items = fetcher.fetch()
-        all_items.extend(items)
+        all_items.extend(fetcher.fetch())
+
+    # Academic fetchers: drain one blog at a time (oldest→newest).
+    # Try each in order; stop as soon as one yields a post.
+    for fetcher in academic_fetchers:
+        academic_items = fetcher.fetch()
+        if academic_items:
+            all_items.extend(academic_items)
+            break
 
     # Group by source
     sources = {}
@@ -85,22 +125,7 @@ if __name__ == "__main__":
             print(f"{item['title']} ({item['link']})")
             print(f"{'='*80}")
 
-            article_content = item["content"]
-
-            prompt = f"""Summarize this article in 2-3 sentences. Include the key details: who, what, when, where, why. Be specific and informative.
-
-Title: {item['title']}
-Content: {article_content}
-
-Output ONLY the summary, nothing else."""
-
-            result = subprocess.run(
-                ["ollama", "run", "qwen2.5:7b"],
-                input=prompt,
-                text=True,
-                capture_output=True,
-            )
-            summary = result.stdout.strip()
+            summary = summarize_item(item)
 
             print(f"\nSummary: {summary}")
 
