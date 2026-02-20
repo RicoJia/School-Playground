@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 from html import unescape
 from html.parser import HTMLParser
 import email.utils
-from pull_feed import FetchRSS
+from pull_feed import FetchRSS, FetchGithubBlogs
 from pull_google_news import FetchGoogleNews
 from filters import filter_min_content_length, generate_consolidated_summary
 from dataclasses import dataclass
@@ -36,6 +36,15 @@ fetchers = [
         additional_per_item_filters=[partial(filter_min_content_length, min_chars=200)],
         additional_total_filters=[generate_consolidated_summary],
     ),
+]
+
+academic_fetchers = [
+    FetchGithubBlogs(
+        name="Github Blogs",
+        base_urls=[
+            "https://aipiano.github.io",
+        ],
+    )
 ]
 
 if __name__ == "__main__":
