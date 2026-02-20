@@ -75,9 +75,9 @@ fetchers = [
 ]
 
 academic_fetchers = [
-    FetchGithubBlogs(name="aipiano", base_url="https://aipiano.github.io"),
-    FetchGithubBlogs(name="udohsolomon", base_url="https://udohsolomon.github.io"),
-    FetchGithubBlogs(name="adaning", base_url="https://adaning.github.io"),
+    # FetchGithubBlogs(name="aipiano", base_url="https://aipiano.github.io"),
+    # FetchGithubBlogs(name="udohsolomon", base_url="https://udohsolomon.github.io"),
+    # FetchGithubBlogs(name="adaning", base_url="https://adaning.github.io"),
 ]
 
 if __name__ == "__main__":
